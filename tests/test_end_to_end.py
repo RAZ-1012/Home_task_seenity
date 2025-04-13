@@ -2,10 +2,11 @@ import io
 import pytest
 from app import create_app
 
+
 @pytest.fixture
 def client():
     app = create_app()
-    app.config['TESTING'] = True
+    app.config["TESTING"] = True
     with app.test_client() as client:
         yield client
 
@@ -21,11 +22,9 @@ new york
 tal avivi
 """
 
-    data = {
-        "file": (io.BytesIO(city_data), "cities.csv")
-    }
+    data = {"file": (io.BytesIO(city_data), "cities.csv")}
 
-    res = client.post("/upload-cities", content_type='multipart/form-data', data=data)
+    res = client.post("/upload-cities", content_type="multipart/form-data", data=data)
     assert res.status_code == 200
     assert b"cities loaded successfully" in res.data
 
@@ -47,9 +46,10 @@ tal avivi
     cities = res.get_json()["cities"]
     city_names = [c["city_name"].lower() for c in cities]
 
-    # Check duplicates are handled (paris should appear once)
+    # Check duplicates are handled
     assert city_names.count("paris") == 1
-    assert "tal avivi" in city_names  
+    # Check if tal avivi deleted
+    assert "tal avivi" not in city_names
 
     # Try closest-city with valid input
     res = client.post("/closest-city", json={"lat": 32.08, "lon": 34.78})
@@ -82,4 +82,4 @@ tal avivi
 
     res = client.get("/export-cities")
     assert res.status_code == 200
-    assert res.mimetype == 'text/csv'
+    assert res.mimetype == "text/csv"

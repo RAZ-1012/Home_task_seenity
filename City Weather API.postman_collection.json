@@ -191,6 +191,38 @@
 				"header": []
 			},
 			"response": []
+		},
+		{
+			"name": "Upload and enrich",
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "formdata",
+					"formdata": [
+						{
+							"key": "file",
+							"type": "file",
+							"src": "postman-cloud:///1f018544-7aff-4a00-8db3-5e1cbea65e5a"
+						}
+					]
+				},
+				"url": {
+					"raw": "http://127.0.0.1:5005/upload-and-enrich",
+					"protocol": "http",
+					"host": [
+						"127",
+						"0",
+						"0",
+						"1"
+					],
+					"port": "5005",
+					"path": [
+						"upload-and-enrich"
+					]
+				}
+			},
+			"response": []
 		}
 	]
 }

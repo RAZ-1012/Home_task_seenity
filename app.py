@@ -1,6 +1,7 @@
 from flask import Flask, request
 from api.endpoints import register_routes
 
+
 def create_app():
     """
     Factory function to create and configure the Flask app.
@@ -18,6 +19,7 @@ def create_app():
         return response
 
     return app
+
 
 if __name__ == "__main__":
     app = create_app()

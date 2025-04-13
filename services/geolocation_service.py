@@ -74,16 +74,4 @@ class GeolocationService:
         geometry = data['results'][0]['geometry']
         return (geometry['lat'], geometry['lng'])
 
-    async def fetch_multiple_coordinates(self, cities: list[str]) -> dict[str, Optional[tuple[float, float]]]:
-        """
-        Fetches coordinates concurrently for a list of cities.
-
-        Args:
-            cities (list[str]): List of city names.
-
-        Returns:
-            dict[str, Optional[tuple[float, float]]]: City name to (lat, lon) mapping.
-        """
-        tasks = [self.fetch_coordinates(city) for city in cities]
-        results = await asyncio.gather(*tasks, return_exceptions=False)
-        return dict(zip(cities, results))
+    

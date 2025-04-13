@@ -1,21 +1,30 @@
 import os
+import asyncio
 from flask import request, jsonify, send_file
 from werkzeug.datastructures import FileStorage
+from dotenv import load_dotenv
+
 from data.data_manager import DataManager
 from services.weather_service import WeatherService
 from services.geolocation_service import GeolocationService
-from core.utils import analyze_enrichment_status , is_valid_coordinates 
+from services.data_enrichment_service import enrich_all_cities, enrich_single_city
+from core.utils import is_valid_coordinates
 
-# Global service instances 
+# Loading path to save
+load_dotenv()
+CITIES_CSV_PATH = os.getenv("CITIES_CSV_PATH", "data/cities.csv")
+
+# Global service instances
 data_manager = DataManager()
 geo_service = GeolocationService()
 weather_service = WeatherService()
+
 
 def register_routes(app):
     """
     Registers all API endpoints to the given Flask app instance.
     """
-    
+
     @app.route("/", methods=["GET"])
     def index():
         """
@@ -41,61 +50,124 @@ def register_routes(app):
             return jsonify({"error": "Missing file"}), 400
 
         file: FileStorage = request.files["file"]
-        
+
         try:
             data_manager.load_cities_from_csv_file(file)
             count = len(data_manager.df)
 
-            return jsonify({
-                "message": f"{count} cities loaded successfully.",
-                "count": count
-            }), 200
+            return (
+                jsonify(
+                    {"message": f"{count} cities loaded successfully.", "count": count}
+                ),
+                200,
+            )
 
         except ValueError as ve:
             return jsonify({"error": str(ve)}), 400
         except Exception:
             return jsonify({"error": "Unexpected error during file upload."}), 500
 
+    @app.route("/upload-and-enrich", methods=["POST"])
+    async def upload_and_enrich():
+        """
+        Uploads a CSV file of cities and immediately enriches them with coordinates and weather data.
+
+        Expects:
+            multipart/form-data with a 'file' field containing a CSV with 'city_name' column.
+
+        Returns:
+            200 OK: All cities uploaded and enriched successfully.
+            207 Multi-Status: Some cities enriched, some failed.
+            400 Bad Request: Missing or invalid file.
+            500 Internal Server Error: Unexpected failure during upload or enrichment.
+        """
+        if "file" not in request.files:
+            return jsonify({"error": "Missing file"}), 400
+
+        file: FileStorage = request.files["file"]
+
+        try:
+            # Load the cities from CSV
+            data_manager.load_cities_from_csv_file(file)
+            city_names = data_manager.get_cities_names()
+
+            # Enrich the loaded cities
+            enriched_results = await enrich_all_cities(city_names)
+            had_failures = data_manager.update_df_with_enrichment(enriched_results)
+
+            enriched_count = len(data_manager.df)
+            failed_count = len(city_names) - enriched_count
+            failed_cities = [
+                item["city_name"]
+                for item in enriched_results
+                if "error" in item and item["error"] is not None
+            ]
+
+            response_body = {
+                "message": "Upload and enrichment completed"
+                + (" with some errors." if had_failures else " successfully."),
+                "enriched_count": enriched_count,
+                "failed_count": failed_count,
+                "failed_cities": failed_cities,
+            }
+
+            return jsonify(response_body), 207 if had_failures else 200
+
+        except ValueError as ve:
+            return jsonify({"error": str(ve)}), 400
+        except Exception as e:
+            print(f"[ERROR] {e}")
+            return (
+                jsonify({"error": "Unexpected error during upload and enrichment"}),
+                500,
+            )
+
     @app.route("/enrich-data", methods=["POST"])
     async def enrich_all():
         """
-        Enriches all loaded cities with coordinates and weather information.
+        Enriches all loaded cities with coordinates and weather data using external APIs.
+        The enrichment is performed asynchronously and concurrently for each city.
 
         Returns:
-            200 OK: All cities enriched successfully.
+            200 OK: All cities were enriched successfully.
             207 Multi-Status: Some cities enriched, some failed.
-            500 Internal Server Error: Failed to enrich any data.
+            422 Unprocessable Entity: No cities loaded.
+            500 Internal Server Error: Enrichment process failed unexpectedly.
         """
-        try:
-            await data_manager.enrich_with_coordinates_from_api(geo_service)
-            await data_manager.enrich_with_weather_from_api(weather_service)
+        if data_manager.df is None or data_manager.df.empty:
+            return jsonify({"error": "No cities loaded"}), 422
 
-            result = analyze_enrichment_status(data_manager.df)
-            enriched_count = int(result['enriched_count'])
-            failed_count = int(result['failed_count'])
-            failed_cities = list(result['failed_cities'])
+        try:
+            city_names = data_manager.get_cities_names()
+            enriched_results = await enrich_all_cities(city_names)
+
+            had_failures = data_manager.update_df_with_enrichment(enriched_results)
+
+            enriched_count = len(data_manager.df)
+            failed_count = len(city_names) - enriched_count
+            failed_cities = [
+                item["city_name"]
+                for item in enriched_results
+                if "error" in item and item["error"] is not None
+            ]
 
             response_body = {
-                "message": "Coordinates and weather enrichment completed.",
+                "message": "Enrichment completed"
+                + (" with some errors." if had_failures else " successfully."),
                 "enriched_count": enriched_count,
                 "failed_count": failed_count,
-                "failed_cities": failed_cities
+                "failed_cities": failed_cities,
             }
 
-            if failed_count == 0:
-                return jsonify(response_body), 200
-            elif enriched_count == 0:
-                return jsonify({"error": "Failed to enrich any cities."}), 500
-            else:
-                return jsonify(response_body), 207  # Multi-Status
+            return jsonify(response_body), 207 if had_failures else 200
 
         except Exception:
             return jsonify({"error": "Failed to enrich data"}), 500
 
     @app.route("/add-city", methods=["POST"])
-    def add_city():
+    async def add_city():
         """
-        Adds a new city to the list and enriches it with coordinates and weather.
+        Adds a new city to the list and enriches it with coordinates and weather data.
 
         Expects:
             JSON body: { "city_name": "City Name" }
@@ -104,8 +176,8 @@ def register_routes(app):
             201 Created: City was added and enriched successfully.
             200 OK: City already exists in the list.
             400 Bad Request: Invalid or missing input.
-            424 Failed Dependency: Failed to fetch coordinates or weather.
-            500 Internal Server Error: Unexpected failure.
+            424 Failed Dependency: Enrichment failed; city not saved.
+            500 Internal Server Error: Unexpected error occurred.
         """
         try:
             data = request.get_json()
@@ -117,25 +189,46 @@ def register_routes(app):
             total = len(data_manager.df)
 
             if not added:
-                return jsonify({
-                    "message": f"City '{city_name}' already exists.",
-                    "total_cities": total,
-                    "new": False
-                }), 200
+                return (
+                    jsonify(
+                        {
+                            "message": f"City '{city_name}' already exists.",
+                            "total_cities": total,
+                            "new": False,
+                        }
+                    ),
+                    200,
+                )
 
-            # Try to enrich city with coordinates and weather
-            success = asyncio.run(enrich_city(city_name))
-            if not success:
+            # Try to enrich the newly added city
+            enriched = await enrich_single_city(city_name, geo_service, weather_service)
+
+            if "error" in enriched:
+                # Enrichment failed — remove the city we just added
                 data_manager.remove_city(city_name)
-                return jsonify({
-                    "error": f"Failed to enrich city '{city_name}'. City was not saved."
-                }), 424  # Failed Dependency
+                return (
+                    jsonify(
+                        {
+                            "error": f"Failed to enrich city '{city_name}'. City was not saved.",
+                            "details": enriched["error"],
+                        }
+                    ),
+                    424,
+                )  # Failed Dependency
 
-            return jsonify({
-                "message": f"City '{city_name}' added and enriched successfully.",
-                "total_cities": len(data_manager.df),
-                "new": True
-            }), 201
+            # Update existing city row with enrichment results
+            data_manager.update_enriched_city_data(enriched)
+
+            return (
+                jsonify(
+                    {
+                        "message": f"City '{city_name}' added and enriched successfully.",
+                        "total_cities": len(data_manager.df),
+                        "new": True,
+                    }
+                ),
+                201,
+            )
 
         except ValueError as ve:
             return jsonify({"error": str(ve)}), 400
@@ -165,20 +258,18 @@ def register_routes(app):
             data = request.get_json()
             if not data or "lat" not in data or "lon" not in data:
                 return jsonify({"error": "Missing 'lat' or 'lon' in request body"}), 400
-            
+
             lat = data["lat"]
             lon = data["lon"]
-            
+
             if not is_valid_coordinates(lat, lon):
                 return jsonify({"error": "Invalid 'lon' or 'lat' value"}), 400
-            
+
             if data_manager.df is None or data_manager.df.empty:
                 return jsonify({"error": "No cities loaded"}), 422
-            
+
             result = await data_manager.find_closest_city(
-                lat=lat,
-                lon=lon,
-                weather_service=weather_service 
+                lat=lat, lon=lon, weather_service=weather_service
             )
 
             return jsonify(result), 200
@@ -192,7 +283,7 @@ def register_routes(app):
     def delete_city(city_name):
         """
         Deletes a city from the current DataFrame by name (case-insensitive).
-        
+
         Args:
             city_name (str): The name of the city to delete (sent as path param).
 
@@ -209,17 +300,22 @@ def register_routes(app):
             data_manager.remove_city(city_name)
             total = len(data_manager.df)
 
-            return jsonify({
-                "message": f"City '{city_name}' removed successfully.",
-                "total_cities": total
-            }), 200
+            return (
+                jsonify(
+                    {
+                        "message": f"City '{city_name}' removed successfully.",
+                        "total_cities": total,
+                    }
+                ),
+                200,
+            )
 
         except ValueError as ve:
             return jsonify({"error": str(ve)}), 404
         except Exception:
             return jsonify({"error": "Failed to remove city"}), 500
-        
-    @app.route("/get-all-cities", methods=["GET"])  
+
+    @app.route("/get-all-cities", methods=["GET"])
     def get_all_cities():
         """
         Returns the list of all cities as JSON.
@@ -236,7 +332,7 @@ def register_routes(app):
         except ValueError as ve:
             return jsonify({"error": str(ve)}), 422
         except Exception:
-            return jsonify({"error": "Failed to retrieve city data"}), 500     
+            return jsonify({"error": "Failed to retrieve city data"}), 500
 
     @app.route("/save-cities", methods=["POST"])
     def save_cities():
@@ -252,17 +348,21 @@ def register_routes(app):
             if data_manager.df is None or data_manager.df.empty:
                 return jsonify({"error": "No data to save."}), 422
 
-            file_path = "data/cities.csv"
-            data_manager.save_cities_to_csv(file_path)
+            data_manager.save_cities_to_csv(CITIES_CSV_PATH)
 
-            return jsonify({
-                "message": "City list saved successfully.",
-                "file_path": file_path
-            }), 200
+            return (
+                jsonify(
+                    {
+                        "message": "City list saved successfully.",
+                        "file_path": CITIES_CSV_PATH,
+                    }
+                ),
+                200,
+            )
 
         except Exception:
             return jsonify({"error": "Failed to save city data."}), 500
-        
+
     @app.route("/export-cities", methods=["GET"])
     def export_cities():
         """
@@ -274,21 +374,20 @@ def register_routes(app):
             404 Not Found: No data available to export.
             500 Internal Server Error: Save or file read failed.
         """
-        file_path = "data/cities.csv"
 
         # If file does not exist, try to save it from memory if available
         if data_manager.df is None or data_manager.df.empty:
             return jsonify({"error": "No data available to export"}), 404
 
-            try:
-                data_manager.save_cities_to_csv(file_path)
-            except Exception:
-                return jsonify({"error": "Failed to save cities before export"}), 500
+        try:
+            data_manager.save_cities_to_csv(CITIES_CSV_PATH)
+        except Exception:
+            return jsonify({"error": "Failed to save cities before export"}), 500
 
         # Return the file as an attachment
         return send_file(
-            file_path,
-            mimetype='text/csv',
+            CITIES_CSV_PATH,
+            mimetype="text/csv",
             as_attachment=True,
-            download_name="cities.csv"
+            download_name="cities.csv",
         )

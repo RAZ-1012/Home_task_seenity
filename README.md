@@ -33,8 +33,33 @@ Returns a confirmation that the API is up.
 
 ---
 
+### `POST /upload-and-enrich`
+**Upload and immediately enrich cities** (coordinates + weather)  
+**Request Type**: `multipart/form-data`  
+**Field Required**: `file`
+
+**Success:**
+```json
+{
+  "message": "Upload and enrichment completed successfully.",
+  "enriched_count": X,
+  "failed_count": 0,
+  "failed_cities": []
+}
+```
+
+**Partial success:**
+- Status code: `207 Multi-Status`
+- Includes list of failed cities
+
+**Errors:**
+- `400 Bad Request`: Missing or invalid file
+- `500 Internal Server Error`: Upload or enrichment failed
+
+---
+
 ### `POST /add-city`
-**Add a new city**
+**Add a single city and enrich it**
 
 **Request Body:**
 ```json
@@ -42,55 +67,40 @@ Returns a confirmation that the API is up.
 ```
 
 **Responses:**
-- `201 Created`: City added
+- `201 Created`: City added and enriched successfully
 - `200 OK`: City already exists
-- `400 Bad Request`: Missing or invalid city_name
+- `424 Failed Dependency`: Enrichment failed; city not saved
+- `400 Bad Request`: Invalid or missing city_name
 - `500 Internal Server Error`
 
 ---
 
-### `DELETE /delete-city/<city_name>`
-**Delete a city by name**
-
-**URL Example:**
-```
-DELETE /delete-city/london
-```
-
-**Responses:**
-- `200 OK`: City deleted
-- `404 Not Found`: City not found
-- `422 Unprocessable Entity`: No data loaded
-- `500 Internal Server Error`: Deletion failed
-
----
-
 ### `POST /enrich-data`
-**Enrich all cities** using:
-- OpenCage API for coordinates
-- OpenWeather API for weather
+**Enrich all loaded cities** (coordinates + weather)
 
-**Response (all succeeded):**
+**Success:**
 ```json
 {
-  "message": "Coordinates and weather enrichment completed.",
-  "enriched_count": 5,
+  "message": "Enrichment completed successfully.",
+  "enriched_count": X,
   "failed_count": 0,
   "failed_cities": []
 }
 ```
 
 **Partial success:**
-- Status code: `207 Multi-Status`  
-- Same response format with `failed_cities` > 0
+- Status code: `207 Multi-Status`
+- Response includes `failed_cities`
 
 **Errors:**
-- `500`: All enrichments failed or unexpected error
+- `422 Unprocessable Entity`: No cities loaded
+- `500 Internal Server Error`: Unexpected failure
 
 ---
 
 ### `POST /closest-city`
-**Find the closest city to a given point**
+**Find the closest city to a given point**  
+Fetches weather if missing.
 
 **Request Body:**
 ```json
@@ -114,14 +124,30 @@ DELETE /delete-city/london
 
 ---
 
+### `DELETE /delete-city/<city_name>`
+**Delete a city by name**
+
+**Example:**
+```
+DELETE /delete-city/london
+```
+
+**Responses:**
+- `200 OK`: City deleted
+- `404 Not Found`: City not found
+- `422 Unprocessable Entity`: No data loaded
+- `500 Internal Server Error`: Deletion failed
+
+---
+
 ### `GET /get-all-cities`
-**Return all current city records**
+**Return all city records as JSON**
 
 **Response:**
 ```json
 {
   "cities": [
-    { "city_name": "paris", "lat": ..., "weather": ..., ... },
+    { "city_name": "paris", "latitude": ..., "weather": ..., ... },
     ...
   ],
   "count": X
@@ -129,17 +155,18 @@ DELETE /delete-city/london
 ```
 
 **Notes:**
-- Returns **only the current in-memory data** (does not enrich).
-- Use `/enrich-data` beforehand if needed.
+- Returns in-memory data only
+- Does not enrich automatically
 
 **Errors:**
-- `422 Unprocessable Entity`: No cities loaded
-- `500 Internal Server Error`: Failed to retrieve data
+- `422 Unprocessable Entity`: No data loaded
+- `500 Internal Server Error`: Retrieval failed
 
 ---
 
 ### `POST /save-cities`
-**Save the current in-memory city list to a CSV file (`data/cities.csv`)**
+**Save the current city list to a CSV file**  
+(File path is configurable via `.env` under `CITIES_CSV_PATH`)
 
 **Response:**
 ```json
@@ -158,16 +185,17 @@ DELETE /delete-city/london
 ### `GET /export-cities`
 **Download the saved CSV file**
 
-If the file does not exist, it attempts to create it from the current in-memory DataFrame.
+If the file does not exist, attempts to create it from memory.
 
-**Success**: Sends the file `cities.csv`  
+**Success**: Sends the file as download  
 **Errors:**
-- `404 Not Found`: No file and no in-memory data to create it
+- `404 Not Found`: No in-memory data to export
 - `500 Internal Server Error`: File creation or read failed
 
 ---
 
 ## ✅ Notes
-- All coordinates and weather data are fetched asynchronously using `httpx` and `asyncio`.
-- The app maintains the CSV data in memory unless saved explicitly with `/save-cities`.
-- The API follows RESTful conventions and returns meaningful status codes for each scenario.
+- All enrichment (coordinates + weather) is done asynchronously using `httpx` and `asyncio`.
+- The app keeps cities in memory and saves explicitly via `/save-cities`.
+- File path for saving is controlled by the environment variable `CITIES_CSV_PATH`.
+- The API follows RESTful standards and returns appropriate status codes.
