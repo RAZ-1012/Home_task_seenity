@@ -92,18 +92,20 @@ def register_routes(app):
         except Exception:
             return jsonify({"error": "Failed to enrich data"}), 500
 
-
     @app.route("/add-city", methods=["POST"])
     def add_city():
         """
-        Adds a single city to the list from a JSON body.
-        Expects: { "city_name": "..." }
+        Adds a new city to the list and enriches it with coordinates and weather.
+
+        Expects:
+            JSON body: { "city_name": "City Name" }
 
         Returns:
-            201 Created: City was added.
-            200 OK: City already exists.
-            400 Bad Request: Missing or invalid city name.
-            500 Internal Server Error: Failed to add city.
+            201 Created: City was added and enriched successfully.
+            200 OK: City already exists in the list.
+            400 Bad Request: Invalid or missing input.
+            424 Failed Dependency: Failed to fetch coordinates or weather.
+            500 Internal Server Error: Unexpected failure.
         """
         try:
             data = request.get_json()
@@ -114,22 +116,31 @@ def register_routes(app):
             added = data_manager.add_city(city_name)
             total = len(data_manager.df)
 
-            if added:
-                return jsonify({
-                    "message": f"City '{city_name}' added successfully.",
-                    "total_cities": total,
-                    "new": True
-                }), 201
-            else:
+            if not added:
                 return jsonify({
                     "message": f"City '{city_name}' already exists.",
                     "total_cities": total,
                     "new": False
-                }), 200  # 409?
+                }), 200
+
+            # Try to enrich city with coordinates and weather
+            success = asyncio.run(enrich_city(city_name))
+            if not success:
+                data_manager.remove_city(city_name)
+                return jsonify({
+                    "error": f"Failed to enrich city '{city_name}'. City was not saved."
+                }), 424  # Failed Dependency
+
+            return jsonify({
+                "message": f"City '{city_name}' added and enriched successfully.",
+                "total_cities": len(data_manager.df),
+                "new": True
+            }), 201
 
         except ValueError as ve:
             return jsonify({"error": str(ve)}), 400
-        except Exception:
+        except Exception as e:
+            print(f"[ERROR] {e}")
             return jsonify({"error": "Failed to add city"}), 500
 
     @app.route("/closest-city", methods=["POST"])
@@ -269,10 +280,10 @@ def register_routes(app):
         if data_manager.df is None or data_manager.df.empty:
             return jsonify({"error": "No data available to export"}), 404
 
-        try:
-            data_manager.save_cities_to_csv(file_path)
-        except Exception:
-            return jsonify({"error": "Failed to save cities before export"}), 500
+            try:
+                data_manager.save_cities_to_csv(file_path)
+            except Exception:
+                return jsonify({"error": "Failed to save cities before export"}), 500
 
         # Return the file as an attachment
         return send_file(

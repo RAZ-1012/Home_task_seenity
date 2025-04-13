@@ -258,3 +258,29 @@ class DataManager:
             "weather": weather,
             "temperature": temperature
         }
+
+    async def enrich_city(city_name: str) -> bool:
+        """
+        Enriches a city with coordinates and weather data.
+        If enrichment fails, returns False.
+
+        Args:
+            city_name (str): Name of the city to enrich.
+
+        Returns:
+            bool: True if enrichment was successful, False otherwise.
+        """
+        coords = await geo_service.fetch_coordinates(city_name)
+        if coords is None:
+            print(f"[ENRICH ERROR] Coordinates not found for '{city_name}'")
+            return False
+
+        lat, lon = coords
+        weather = await weather_service.fetch_weather(lat, lon)
+        if weather is None:
+            print(f"[ENRICH ERROR] Weather not found for '{city_name}'")
+            return False
+
+        weather_description, temperature = weather
+        data_manager.update_city_info(city_name, lat, lon, weather_description, temperature)
+        return True
