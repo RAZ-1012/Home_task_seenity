@@ -25,7 +25,7 @@ class GeolocationService:
             cls._instance = super(GeolocationService, cls).__new__(cls)
         return cls._instance
 
-    def __init__(self, api_key: str = opencage_key, max_concurrent_requests: int = 10):
+    def __init__(self, api_key: str = opencage_key, max_concurrent_requests: int = 20):
         # Prevent re-initialization
         if hasattr(self, "_initialized") and self._initialized:
             return

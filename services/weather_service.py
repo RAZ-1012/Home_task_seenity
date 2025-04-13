@@ -27,7 +27,7 @@ class WeatherService:
         return cls._instance
 
     def __init__(
-        self, api_key: str = open_weather_key, max_concurrent_requests: int = 10
+        self, api_key: str = open_weather_key, max_concurrent_requests: int = 25
     ):
         # Prevent re-initialization
         if hasattr(self, "_initialized") and self._initialized:
