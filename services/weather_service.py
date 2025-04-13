@@ -1,5 +1,3 @@
-# The `WeatherService` class is a singleton service that fetches current weather data based on
-# geographic coordinates using the OpenWeatherMap API with concurrency control.
 import httpx
 import os
 from dotenv import load_dotenv
