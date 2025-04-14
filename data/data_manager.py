@@ -9,11 +9,12 @@ from services.weather_service import WeatherService
 from core.utils import haversine_distance
 
 
-
-
 class DataManager:
     """
     Manages city data loaded from a CSV file and stored in a pandas DataFrame.
+    Supports city enrichment with coordinates and weather information.
+
+    Used throughout the API to manage application state.
     """
 
     def __init__(self) -> None:
@@ -38,17 +39,17 @@ class DataManager:
         file_stream = BytesIO(file_bytes)
         temp_df = pd.read_csv(file_stream)
 
-        if 'city_name' not in temp_df.columns:
+        if "city_name" not in temp_df.columns:
             raise ValueError("Missing 'city_name' column in CSV.")
 
-        temp_df = temp_df[['city_name']].copy()
-        temp_df['city_name'] = temp_df['city_name'].astype(str).str.lower()
+        temp_df = temp_df[["city_name"]].copy()
+        temp_df["city_name"] = temp_df["city_name"].astype(str).str.lower()
 
-        temp_df = temp_df.drop_duplicates(subset='city_name').reset_index(drop=True)
+        temp_df = temp_df.drop_duplicates(subset="city_name").reset_index(drop=True)
 
         self.df = temp_df
 
-    def save_cities_to_csv(self, file_path: str="data/cities.csv") -> None:
+    def save_cities_to_csv(self, file_path: str = "data/cities.csv") -> None:
         """
         Saves the current DataFrame to a CSV file.
 
@@ -83,12 +84,12 @@ class DataManager:
         city_name_lower = city_name.lower()
 
         if city_name_lower in self.df["city_name"].values:
-            return False 
+            return False
 
         new_row = pd.DataFrame({"city_name": [city_name_lower]})
         self.df = pd.concat([self.df, new_row], ignore_index=True)
         return True
-        
+
     def remove_city(self, city_name: str) -> None:
         """
         Removes any row(s) from the DataFrame that match the given city name (case-insensitive).
@@ -106,12 +107,14 @@ class DataManager:
         city_name_lower = city_name.lower()
         initial_length = len(self.df)
 
-        self.df = self.df[self.df['city_name'] != city_name_lower].reset_index(drop=True)
+        self.df = self.df[self.df["city_name"] != city_name_lower].reset_index(
+            drop=True
+        )
 
         # If no rows were removed, raise an error
         if len(self.df) == initial_length:
             raise ValueError(f"City '{city_name}' does not exist in the DataFrame.")
-        
+
     def to_send(self) -> str:
         """
         Returns the entire DataFrame in JSON format with orient='records'.
@@ -123,89 +126,82 @@ class DataManager:
             str: A JSON string representing the DataFrame rows.
         """
         if self.df is None or self.df.empty:
-            raise ValueError("DataFrame is uninitialized or empty. Nothing to export as JSON.")
+            raise ValueError(
+                "DataFrame is uninitialized or empty. Nothing to export as JSON."
+            )
 
-        return self.df.to_dict(orient='records')
+        return self.df.to_dict(orient="records")
 
-    async def enrich_with_coordinates_from_api(self, geo_service: GeolocationService) -> None:
+    def update_df_with_enrichment(self, enriched_data: list[dict]) -> bool:
         """
-        Enriches the internal DataFrame with latitude and longitude coordinates for each city,
-        using the provided GeolocationService.
+        Replaces the DataFrame with enriched data (after enrich_all_cities).
+        Filters out rows with errors.
 
-        This function sends asynchronous requests for all cities in the 'city_name' column
-        and updates the DataFrame with 'lat' and 'lon' columns.
+        Returns:
+            bool: True if any enrichment failed (i.e., at least one row had an 'error' field), False otherwise.
+        """
+        df = pd.DataFrame(enriched_data)
+
+        had_errors = "error" in df.columns and df["error"].notnull().any()
+
+        if "error" in df.columns:
+            df = df[df["error"].isnull()].drop(columns=["error"])
+
+        self.df = df.reset_index(drop=True)
+        return had_errors
+
+    def update_enriched_city_data(self, enriched_data: dict) -> None:
+        """
+        Updates an existing city in the DataFrame with enriched data
+        (coordinates and weather).
 
         Args:
-            geo_service (GeolocationService): An instance of GeolocationService to fetch coordinates.
+            enriched_data (dict): Dictionary containing at least 'city_name',
+                                and optionally: 'latitude', 'longitude', 'weather', 'temperature'.
 
         Raises:
-            ValueError: If the internal DataFrame is uninitialized or missing 'city_name' column.
+            ValueError: If DataFrame is uninitialized or city is not found.
         """
-        if self.df is None or 'city_name' not in self.df.columns:
-            raise ValueError("DataFrame is not initialized or missing 'city_name'.")
+        if self.df is None:
+            raise ValueError("DataFrame is not initialized.")
 
-        cities = self.df['city_name'].tolist()
-        city_to_coords = await geo_service.fetch_multiple_coordinates(cities)
+        if "city_name" not in enriched_data:
+            raise ValueError("Missing 'city_name' in enriched data.")
 
-        lat_list = []
-        lon_list = []
+        city_name = enriched_data["city_name"].lower()
 
-        for city in cities:
-            coords = city_to_coords.get(city)
-            if coords is None:
-                lat_list.append(None)
-                lon_list.append(None)
-            else:
-                lat, lon = coords
-                lat_list.append(lat)
-                lon_list.append(lon)
+        if city_name not in self.df["city_name"].values:
+            raise ValueError(f"City '{city_name}' not found in the DataFrame.")
 
-        self.df['lat'] = lat_list
-        self.df['lon'] = lon_list
+        index = self.df.index[self.df["city_name"] == city_name].tolist()[0]
 
-    async def enrich_with_weather_from_api(self, weather_service: WeatherService) -> None:
+        for key in ["latitude", "longitude", "weather", "temperature"]:
+            if key in enriched_data:
+                self.df.at[index, key] = enriched_data[key]
+
+    def get_cities_names(self) -> list[str]:
         """
-        Enriches the DataFrame with current weather information
-        based on existing latitude and longitude columns.
+        Returns a list of all city names currently in the DataFrame.
 
-        Adds two new columns:
-        - 'weather' (description)
-        - 'temperature' (in Celsius)
-
-        Args:
-            weather_service (WeatherService): Service to fetch weather data.
+        Returns:
+            list[str]: A list of city names as lowercase strings.
 
         Raises:
-            ValueError: If DataFrame is uninitialized or missing coordinates.
+            ValueError: If the DataFrame is uninitialized or empty.
         """
-        if self.df is None or 'lat' not in self.df.columns or 'lon' not in self.df.columns:
-            raise ValueError("DataFrame is not initialized or missing coordinates.")
+        if self.df is None or self.df.empty:
+            raise ValueError("DataFrame is uninitialized or empty.")
 
-        locations = list(zip(self.df['lat'], self.df['lon']))
-        results = await weather_service.fetch_multiple_weather(locations)
+        return self.df["city_name"].tolist()
 
-        weather_descriptions = []
-        temperatures = []
-
-        for result in results:
-            if result is None:
-                weather_descriptions.append(None)
-                temperatures.append(None)
-            else:
-                description, temp = result
-                weather_descriptions.append(description)
-                temperatures.append(temp)
-
-        self.df['weather'] = weather_descriptions
-        self.df['temperature'] = temperatures
-
-    async def find_closest_city(self, lat: float, lon: float, weather_service: WeatherService | None = None) -> dict:
+    async def find_closest_city(
+        self, lat: float, lon: float, weather_service: WeatherService | None = None
+    ) -> dict:
         """
         Finds the closest city in the DataFrame to the given coordinates,
         and returns its weather forecast and temperature.
 
-        If coordinates are missing, runs coordinate enrichment.
-        If weather data is missing, fetches it on-demand for the closest city only (if service is provided).
+        If weather data is missing for the closest city, attempts to fetch it on-demand.
 
         Args:
             lat (float): Latitude of the point.
@@ -221,22 +217,23 @@ class DataManager:
             }
 
         Raises:
-            ValueError: If the DataFrame is uninitialized.
+            ValueError: If the DataFrame is uninitialized or missing coordinates.
         """
-        if self.df is None:
+        if self.df is None or self.df.empty:
             raise ValueError("DataFrame is empty or uninitialized.")
 
-        if 'lat' not in self.df.columns or 'lon' not in self.df.columns:
-            geo_service = GeolocationService()
-            await self.enrich_with_coordinates_from_api(geo_service)
+        if "latitude" not in self.df.columns or "longitude" not in self.df.columns:
+            raise ValueError(
+                "Missing coordinates: Enrich cities before calling this endpoint."
+            )
 
         distances = []
         for _, row in self.df.iterrows():
-            city_lat = row['lat']
-            city_lon = row['lon']
+            city_lat = row["latitude"]
+            city_lon = row["longitude"]
 
             if pd.isna(city_lat) or pd.isna(city_lon):
-                distances.append(float('inf'))
+                distances.append(float("inf"))
             else:
                 dist = haversine_distance(lat, lon, city_lat, city_lon)
                 distances.append(dist)
@@ -244,17 +241,24 @@ class DataManager:
         closest_idx = int(pd.Series(distances).idxmin())
         closest_row = self.df.loc[closest_idx]
 
-        if weather_service is None:
-            weather_service = WeatherService()
-        weather = None
-        temperature = None
-        result = await weather_service.fetch_weather(closest_row["lat"], closest_row["lon"])
-        if result:
-            weather, temperature = result
+        # Try to get existing weather data
+        weather = closest_row.get("weather")
+        temperature = closest_row.get("temperature")
+
+        # If missing and service provided — fetch on demand
+        if (pd.isna(weather) or pd.isna(temperature)) and weather_service is not None:
+            result = await weather_service.fetch_weather(
+                closest_row["latitude"], closest_row["longitude"]
+            )
+            if result:
+                weather, temperature = result
+                # Optional: update in df
+                self.df.at[closest_idx, "weather"] = weather
+                self.df.at[closest_idx, "temperature"] = temperature
 
         return {
             "city_name": closest_row["city_name"],
             "distance_km": round(distances[closest_idx], 2),
             "weather": weather,
-            "temperature": temperature
+            "temperature": temperature,
         }

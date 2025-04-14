@@ -25,7 +25,7 @@ class GeolocationService:
             cls._instance = super(GeolocationService, cls).__new__(cls)
         return cls._instance
 
-    def __init__(self, api_key: str = opencage_key, max_concurrent_requests: int = 10):
+    def __init__(self, api_key: str = opencage_key, max_concurrent_requests: int = 20):
         # Prevent re-initialization
         if hasattr(self, "_initialized") and self._initialized:
             return
@@ -74,16 +74,4 @@ class GeolocationService:
         geometry = data['results'][0]['geometry']
         return (geometry['lat'], geometry['lng'])
 
-    async def fetch_multiple_coordinates(self, cities: list[str]) -> dict[str, Optional[tuple[float, float]]]:
-        """
-        Fetches coordinates concurrently for a list of cities.
-
-        Args:
-            cities (list[str]): List of city names.
-
-        Returns:
-            dict[str, Optional[tuple[float, float]]]: City name to (lat, lon) mapping.
-        """
-        tasks = [self.fetch_coordinates(city) for city in cities]
-        results = await asyncio.gather(*tasks, return_exceptions=False)
-        return dict(zip(cities, results))
+    
