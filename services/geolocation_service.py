@@ -18,23 +18,23 @@ class GeolocationService:
     for given city names using the OpenCage Geocoder API.
     """
 
-    _instance = None
+    # _instance = None
 
-    def __new__(cls, *args, **kwargs):
-        if cls._instance is None:
-            cls._instance = super(GeolocationService, cls).__new__(cls)
-        return cls._instance
+    # def __new__(cls, *args, **kwargs):
+    #     if cls._instance is None:
+    #         cls._instance = super(GeolocationService, cls).__new__(cls)
+    #     return cls._instance
 
-    def __init__(self, api_key: str = opencage_key, max_concurrent_requests: int = 25):
+    def __init__(self, api_key: str = opencage_key, max_concurrent_requests: int = 15):
         # Prevent re-initialization
-        if hasattr(self, "_initialized") and self._initialized:
-            return
+        # if hasattr(self, "_initialized") and self._initialized:
+        #     return
 
         if not api_key:
             raise ValueError("Missing OpenCage API key.")
         self.api_key = api_key
         self.semaphore = Semaphore(max_concurrent_requests)
-        self._initialized = True
+        # self._initialized = True
 
     async def fetch_coordinates(self, city_name: str) -> Optional[tuple[float, float]]:
         """
