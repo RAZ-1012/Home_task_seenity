@@ -90,7 +90,7 @@ def register_routes(app):
             # Load the cities from CSV
             data_manager.load_cities_from_csv_file(file)
             city_names = data_manager.get_cities_names()
-
+            
             # Enrich the loaded cities
             enriched_results = await enrich_all_cities(city_names)
             had_failures = data_manager.update_df_with_enrichment(enriched_results)

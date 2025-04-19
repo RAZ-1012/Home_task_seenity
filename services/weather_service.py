@@ -19,26 +19,26 @@ class WeatherService:
     based on geographic coordinates using the OpenWeatherMap API.
     """
 
-    _instance = None  # class-level singleton reference
+    # _instance = None  # class-level singleton reference
 
-    def __new__(cls, *args, **kwargs):
-        if cls._instance is None:
-            cls._instance = super(WeatherService, cls).__new__(cls)
-        return cls._instance
+    # def __new__(cls, *args, **kwargs):
+    #     if cls._instance is None:
+    #         cls._instance = super(WeatherService, cls).__new__(cls)
+    #     return cls._instance
 
     def __init__(
-        self, api_key: str = open_weather_key, max_concurrent_requests: int = 25
+        self, api_key: str = open_weather_key, max_concurrent_requests: int = 15
     ):
         # Prevent re-initialization
-        if hasattr(self, "_initialized") and self._initialized:
-            return
+        # if hasattr(self, "_initialized") and self._initialized:
+        #     return
 
         if not api_key:
             raise ValueError("Missing OpenWeatherMap API key.")
 
         self.api_key = api_key
         self.semaphore = Semaphore(max_concurrent_requests)
-        self._initialized = True
+        # self._initialized = True
 
     async def fetch_weather(
         self, lat: float, lon: float
